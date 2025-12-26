@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <string.h>  // for memset
 
 #define SCREEN_W 960
 #define SCREEN_H 720
@@ -49,19 +50,23 @@ typedef struct {
     int top, bottom;
 } ClipRange;
 
+// NEW: Track which sectors have already been rendered this frame
+bool sector_rendered[MAX_SECTORS];
+
 void draw_minimap(SDL_Renderer *renderer);
 
 void init_map() {
     sectors[0] = (Sector){0, 4, 0.0f, 3.0f, 0x808080FFU, 0x404060FFU};
 
     walls[0] = (Wall){{5,5}, {15,5}, -1, 0xFF0000FFU};   // Red front
-    walls[1] = (Wall){{15,5}, {15,15}, -1, 0x00FF00FFU};  // Green right
-    walls[2] = (Wall){{15,15}, {5,15}, -1, 0x0000FFFFU};  // Blue back
-    walls[3] = (Wall){{5,15}, {5,5}, 1, 0xFFFF00FFU};     // Yellow portal left
+    walls[1] = (Wall){{15,5}, {15,15}, -1, 0x00FF00FFU}; // Green right
+    walls[2] = (Wall){{15,15}, {5,15}, -1, 0x0000FFFFU}; // Blue back
+    walls[3] = (Wall){{5,15}, {5,5}, 1, 0xFFFF00FFU};     // Yellow portal to sector 1
 
     sectors[1] = (Sector){4, 4, 0.0f, 1.5f, 0x606000FFU, 0xA0A040FFU};
 
-    walls[4] = (Wall){{5,15}, {5,5}, 0, 0xDDDD00FFU};
+    // Made this wall SOLID (-1) to prevent bidirectional infinite portal loop
+    walls[4] = (Wall){{5,15}, {5,5}, -1, 0xDDDD00FFU};   // Dark yellow - no portal back
     walls[5] = (Wall){{5,5}, {10,5}, -1, 0xDD0000FFU};
     walls[6] = (Wall){{10,5}, {10,15}, -1, 0x00DD00FFU};
     walls[7] = (Wall){{10,15}, {5,15}, -1, 0x0000DDFFU};
@@ -72,14 +77,16 @@ void init_map() {
     player.x = 10.0;
     player.y = 13.0;
     player.z = 1.0;
-    // Fixed: now angle 0 faces +X (right on minimap). To face the red wall (at y=5, i.e. negative Y direction),
-    // we need to look down (negative Y) → angle = 3π/2 = 270°
-    player.angle = 4.71238898038469;  // 270° — facing negative Y → toward red wall
+    player.angle = 4.71238898038469;  // 270° — facing negative Y (toward red wall)
     player.current_sector = 0;
 }
 
 void render_sector(SDL_Renderer *renderer, int sector_id, ClipRange clip[SCREEN_W], int recursion) {
     if (recursion > MAX_RECURSION) return;
+
+    // NEW: Prevent rendering the same sector multiple times in one frame
+    if (sector_rendered[sector_id]) return;
+    sector_rendered[sector_id] = true;
 
     Sector *s = &sectors[sector_id];
     const double scale_factor = (SCREEN_W / 2.0) / tan(FOV * M_PI / 360.0);
@@ -92,10 +99,8 @@ void render_sector(SDL_Renderer *renderer, int sector_id, ClipRange clip[SCREEN_
         double dx2 = w->b.x - player.x;
         double dy2 = w->b.y - player.y;
 
-        // FIXED ROTATION MATRIX — now matches movement and minimap perfectly
-        // Angle 0 → facing positive X, increasing counterclockwise
-        double vx1 = -dx1 * sin(player.angle) + dy1 * cos(player.angle);  // lateral (right positive)
-        double vz1 =  dx1 * cos(player.angle) + dy1 * sin(player.angle);  // depth (forward positive)
+        double vx1 = -dx1 * sin(player.angle) + dy1 * cos(player.angle);
+        double vz1 =  dx1 * cos(player.angle) + dy1 * sin(player.angle);
 
         double vx2 = -dx2 * sin(player.angle) + dy2 * cos(player.angle);
         double vz2 =  dx2 * cos(player.angle) + dy2 * sin(player.angle);
@@ -179,6 +184,7 @@ void render_sector(SDL_Renderer *renderer, int sector_id, ClipRange clip[SCREEN_
                 SDL_RenderDrawLine(renderer, x, wall_top, x, wall_bot);
             }
 
+            // Only solid walls block further drawing
             if (w->portal_sector == -1) {
                 clip[x].top = cy > clip[x].top ? cy : clip[x].top;
                 clip[x].bottom = fy < clip[x].bottom ? fy : clip[x].bottom;
@@ -256,7 +262,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    SDL_Window *window = SDL_CreateWindow("Portal Engine - FIXED ORIENTATION",
+    SDL_Window *window = SDL_CreateWindow("Portal Engine - FIXED ORIENTATION & FPS",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         SCREEN_W, SCREEN_H, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
 
@@ -300,10 +306,14 @@ int main(int argc, char *argv[]) {
         if (keys[SDL_SCANCODE_A]) player.angle -= rot_speed;
         if (keys[SDL_SCANCODE_D]) player.angle += rot_speed;
 
+        // Reset clip ranges
         for (int i = 0; i < SCREEN_W; i++) {
             clip[i].top = 0;
             clip[i].bottom = SCREEN_H - 1;
         }
+
+        // NEW: Clear rendered sectors every frame
+        memset(sector_rendered, 0, sizeof(sector_rendered));
 
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
