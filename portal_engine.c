@@ -103,17 +103,46 @@ void update_player_sector(void) {
 
 // ------------------- Renderer -------------------
 
+// Replace the entire render_sector function with this version
+
 void render_sector(SDL_Renderer *r, int sid, ClipRange *clip, int depth, int sw, int sh) {
     if (depth > MAX_RECURSION_DEPTH) return;
-
     Sector *s = &sectors[sid];
     double proj = (sw / 2.0) / tan(FOV_DEG * M_PI / 360.0);
     double yoff = sh / 2.0 + player.pitch * (sh / 2.0);
 
+    // Collect walls + approximate depth for rough back-to-front sort
+    typedef struct { int idx; double avg_vz; } WallEntry;
+    WallEntry entries[64];
+    int n = 0;
+
     for (int i = 0; i < s->wall_count; i++) {
         Wall *w = &walls[s->first_wall + i];
+        double dx1 = w->p1.x - player.x, dy1 = w->p1.y - player.y;
+        double dx2 = w->p2.x - player.x, dy2 = w->p2.y - player.y;
+        double vz1 = dx1 * cos(player.angle) + dy1 * sin(player.angle);
+        double vz2 = dx2 * cos(player.angle) + dy2 * sin(player.angle);
+        if (vz1 > NEAR_PLANE || vz2 > NEAR_PLANE) {  // at least partially in front
+            double avg_vz = (fmax(vz1, NEAR_PLANE) + fmax(vz2, NEAR_PLANE)) * 0.5;
+            entries[n++] = (WallEntry){i, avg_vz};
+        }
+    }
 
-        // View transformation
+    // Sort back-to-front (higher vz = farther)
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            if (entries[i].avg_vz < entries[j].avg_vz) {
+                WallEntry tmp = entries[i];
+                entries[i] = entries[j];
+                entries[j] = tmp;
+            }
+        }
+    }
+
+    for (int ei = 0; ei < n; ei++) {
+        int i = entries[ei].idx;
+        Wall *w = &walls[s->first_wall + i];
+
         double dx1 = w->p1.x - player.x, dy1 = w->p1.y - player.y;
         double dx2 = w->p2.x - player.x, dy2 = w->p2.y - player.y;
 
@@ -124,7 +153,6 @@ void render_sector(SDL_Renderer *r, int sid, ClipRange *clip, int depth, int sw,
 
         if (vz1 <= 0 && vz2 <= 0) continue;
 
-        // Clip to NEAR_PLANE
         if (vz1 < NEAR_PLANE) {
             double t = (NEAR_PLANE - vz1) / (vz2 - vz1);
             vx1 += t * (vx2 - vx1); vz1 = NEAR_PLANE;
@@ -136,70 +164,102 @@ void render_sector(SDL_Renderer *r, int sid, ClipRange *clip, int depth, int sw,
 
         int x1 = (int)(sw / 2.0 - vx1 * proj / vz1);
         int x2 = (int)(sw / 2.0 - vx2 * proj / vz2);
-        if (x1 >= x2) continue;
 
-        int sx = fmax(0, x1), ex = fmin(sw - 1, x2);
-        double iz1 = 1.0 / vz1, iz2 = 1.0 / vz2;
+        // Make range inclusive and robust against rounding
+        if (x1 > x2) { int tmp = x1; x1 = x2; x2 = tmp; }
+        int sx = fmax(0, x1);
+        int ex = fmin(sw - 1, x2);
+        if (sx > ex) continue;
 
-        // Prepare child clip for portal recursion
-        ClipRange child_clip[1024];
-        bool portal_visible = false;
+        double iz1 = 1.0 / vz1;
+        double iz2 = 1.0 / vz2;
 
-        for (int x = sx; x <= ex; x++) {
-            if (clip[x].top >= clip[x].bottom) continue;
+        ClipRange child[1024];  // assuming sw <= 1024
+        bool has_visible_portal = false;
 
-            double t = (double)(x - x1) / (x2 - x1);
-            double sc = proj * (iz1 + t * (iz2 - iz1));
+        if (w->portal_to >= 0) {
+            Sector *ns = &sectors[w->portal_to];
 
-            int yc = (int)(yoff - (s->ceil_height - player.z) * sc);
-            int yf = (int)(yoff - (s->floor_height - player.z) * sc);
+            // Initialize child with current clip
+            for (int x = sx; x <= ex; x++) child[x] = clip[x];
 
-            if (w->portal_to >= 0) {
-                Sector *ns = &sectors[w->portal_to];
-                int nyc = (int)(yoff - (ns->ceil_height - player.z) * sc);
-                int nyf = (int)(yoff - (ns->floor_height - player.z) * sc);
+            for (int x = sx; x <= ex; x++) {
+                if (clip[x].top >= clip[x].bottom) continue;
 
-                // Current sector ceiling/floor
-                draw_vline(r, x, clip[x].top, fmax(clip[x].top, yc), s->ceil_color);
-                draw_vline(r, x, fmin(clip[x].bottom, yf), clip[x].bottom, s->floor_color);
+                double t = (double)(x - x1) / (x2 - x1);
+                double sc = proj * (iz1 + t * (iz2 - iz1));
 
-                // Portal lips (wall between height differences)
-                draw_vline(r, x, fmax(clip[x].top, yc), fmin(clip[x].bottom, nyc), w->color);
-                draw_vline(r, x, fmax(clip[x].top, nyf), fmin(clip[x].bottom, yf), w->color);
+                int yc_this = (int)(yoff - (s->ceil_height - player.z) * sc);
+                int yf_this = (int)(yoff - (s->floor_height - player.z) * sc);
+                int yc_next = (int)(yoff - (ns->ceil_height - player.z) * sc);
+                int yf_next = (int)(yoff - (ns->floor_height - player.z) * sc);
 
-                // Shrink child window
-                child_clip[x].top = fmax(clip[x].top, fmax(yc, nyc));
-                child_clip[x].bottom = fmin(clip[x].bottom, fmin(yf, nyf));
-                if (child_clip[x].top < child_clip[x].bottom) portal_visible = true;
-            } else {
-                // Solid wall
-                draw_vline(r, x, clip[x].top, fmax(clip[x].top, yc), s->ceil_color);
-                draw_vline(r, x, fmin(clip[x].bottom, yf), clip[x].bottom, s->floor_color);
-                draw_vline(r, x, fmax(clip[x].top, yc), fmin(clip[x].bottom, yf), w->color);
-                
-                // Solid wall consumes the vertical space
-                clip[x].top = clip[x].bottom;
+                // Draw ceiling/floor of CURRENT sector outside portal
+                int portal_top    = fmax(yc_this, yc_next);
+                int portal_bot    = fmin(yf_this, yf_next);
+
+                // Ceiling above portal opening
+                if (clip[x].top < portal_top) {
+                    draw_vline(r, x, clip[x].top, portal_top, s->ceil_color);
+                }
+                // Floor below portal opening
+                if (portal_bot < clip[x].bottom) {
+                    draw_vline(r, x, portal_bot, clip[x].bottom, s->floor_color);
+                }
+
+                // Draw portal frame / step / lip if heights differ
+                if (yc_next > yc_this) draw_vline(r, x, yc_this, yc_next, w->color);
+                if (yf_next < yf_this) draw_vline(r, x, yf_next, yf_this, w->color);
+
+                // Tight child clip = only the actual portal opening
+                child[x].top    = fmax(clip[x].top,    portal_top);
+                child[x].bottom = fmin(clip[x].bottom, portal_bot);
+
+                if (child[x].top < child[x].bottom) has_visible_portal = true;
             }
-        }
 
-        if (w->portal_to >= 0 && portal_visible) {
-            render_sector(r, w->portal_to, child_clip, depth + 1, sw, sh);
-            // After returning from recursion, we must update the current clip 
-            // so subsequent walls in THIS sector don't overdraw the portal
-            for(int x = sx; x <= ex; x++) {
-                // If a portal was here, the "available" space for the rest of the 
-                // walls in this sector is now blocked by whatever was in the portal.
-                // However, in a standard portal engine, we usually just update clip 
-                // based on the portal boundaries.
-                clip[x].top = fmax(clip[x].top, child_clip[x].top); // This is simplified
-                clip[x].bottom = fmin(clip[x].bottom, child_clip[x].bottom);
-                // But for perfect occlusion, we mark the portal area as used:
-                clip[x].top = clip[x].bottom; 
+            if (has_visible_portal) {
+                render_sector(r, w->portal_to, child, depth + 1, sw, sh);
+            }
+
+            // After recursion: block portal columns completely in parent clip
+            // (prevents later walls in same sector from leaking into portal area)
+            for (int x = sx; x <= ex; x++) {
+                if (clip[x].top < clip[x].bottom) {
+                    clip[x].top = clip[x].bottom;  // fully consumed
+                }
+            }
+        } else {
+            // Solid wall — draw everything and fully consume column
+            for (int x = sx; x <= ex; x++) {
+                if (clip[x].top >= clip[x].bottom) continue;
+
+                double t = (double)(x - x1) / (x2 - x1);
+                double sc = proj * (iz1 + t * (iz2 - iz1));
+
+                int yc = (int)(yoff - (s->ceil_height - player.z) * sc);
+                int yf = (int)(yoff - (s->floor_height - player.z) * sc);
+
+                // Ceiling
+                if (clip[x].top < yc)
+                    draw_vline(r, x, clip[x].top, yc, s->ceil_color);
+
+                // Wall
+                int wall_top = fmax(clip[x].top, yc);
+                int wall_bot = fmin(clip[x].bottom, yf);
+                if (wall_top < wall_bot)
+                    draw_vline(r, x, wall_top, wall_bot, w->color);
+
+                // Floor
+                if (yf < clip[x].bottom)
+                    draw_vline(r, x, yf, clip[x].bottom, s->floor_color);
+
+                // Consume entire column
+                clip[x].top = clip[x].bottom;
             }
         }
     }
 }
-
 // ------------------- Main -------------------
 
 int main(int argc, char *argv[]) {
