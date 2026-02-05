@@ -51,24 +51,51 @@ void draw_vline(SDL_Renderer *r, int x, int y1, int y2, Uint32 c) {
 
 void init_map(void) {
     int wi = 0;
-    // Sector 0: TALL ROOM (Ceiling 4.0)
-    sectors[0] = (Sector){0, 4, 0, 4.0, 0x444444FF, 0x222222FF};
-    walls[wi++] = (Wall){{-5,-5},{ 5,-5},-1,0xFF0000FF};
-    walls[wi++] = (Wall){{ 5,-5},{ 5, 5}, 1,0x00FF00FF}; // portal to 1
-    walls[wi++] = (Wall){{ 5, 5},{-5, 5},-1,0x0000FFFF};
-    walls[wi++] = (Wall){{-5, 5},{-5,-5},-1,0xFFFF00FF};
 
-    // Sector 1: SHORT ROOM (Ceiling 2.2)
-    sectors[1] = (Sector){4, 4, 0, 2.2, 0x555555FF, 0x333333FF};
-    walls[wi++] = (Wall){{ 5,-5},{15,-5},-1,0xFF00FFFF};
-    walls[wi++] = (Wall){{15,-5},{15, 5},-1,0x00FFFFFF};
-    walls[wi++] = (Wall){{15, 5},{ 5, 5},-1,0xFF8800FF};
-    walls[wi++] = (Wall){{ 5, 5},{ 5,-5}, 0,0x00FF00FF}; // portal back to 0
+    // --- Sector 0: Central Hub (The Crossroads) ---
+    // Floor 0.0, Ceiling 3.0
+    sectors[0] = (Sector){0, 5, 0.0, 3.0, 0x333333FF, 0x111111FF};
+    walls[wi++] = (Wall){{-5, -5}, { 5, -5}, -1, 0xFF0000FF}; // North Wall
+    walls[wi++] = (Wall){{ 5, -5}, { 5,  5},  1, 0x00FF00FF}; // PORTAL to East Room
+    walls[wi++] = (Wall){{ 5,  5}, {-5,  5},  2, 0x0000FFFF}; // PORTAL to South Corridor
+    walls[wi++] = (Wall){{-5,  5}, {-5, -2}, -1, 0xFFFF00FF}; // West Wall Part 1
+    walls[wi++] = (Wall){{-5, -2}, {-5, -5},  4, 0xAA00AAFF}; // PORTAL to Raised Deck
 
-    // Start in the short room looking at the tall room
-    player = (Player){10.0, 0.0, 1.5, M_PI, 0, 1}; 
+    // --- Sector 1: The Sunken Pit (East Room) ---
+    // Floor -1.0 (Lowered), Ceiling 2.0
+    sectors[1] = (Sector){5, 4, -1.0, 2.0, 0x222244FF, 0x111122FF};
+    walls[wi++] = (Wall){{ 5, -5}, {15, -5}, -1, 0x00FFFFFF};
+    walls[wi++] = (Wall){{15, -5}, {15,  5}, -1, 0xFF8800FF};
+    walls[wi++] = (Wall){{15,  5}, { 5,  5}, -1, 0xFFFFFFFF};
+    walls[wi++] = (Wall){{ 5,  5}, { 5, -5},  0, 0x00FF00FF}; // PORTAL back to Hub
+
+    // --- Sector 2: The South Corridor ---
+    // Floor 0.0, Ceiling 2.5
+    sectors[2] = (Sector){9, 4, 0.0, 2.5, 0x444444FF, 0x222222FF};
+    walls[wi++] = (Wall){{ 5,  5}, { 5, 15}, -1, 0x888888FF};
+    walls[wi++] = (Wall){{ 5, 15}, {-5, 15},  3, 0x00FF00FF}; // PORTAL to Dark Room
+    walls[wi++] = (Wall){{-5, 15}, {-5,  5}, -1, 0x888888FF};
+    walls[wi++] = (Wall){{-5,  5}, { 5,  5},  0, 0x0000FFFF}; // PORTAL back to Hub
+
+    // --- Sector 3: The Dark Room (Far South) ---
+    // Very low ceiling, high floor (Crawlspace)
+    sectors[3] = (Sector){13, 4, 0.5, 1.2, 0x111111FF, 0x050505FF};
+    walls[wi++] = (Wall){{-5, 15}, { 5, 15},  2, 0x00FF00FF}; // PORTAL back to Corridor
+    walls[wi++] = (Wall){{ 5, 15}, { 5, 20}, -1, 0x440000FF};
+    walls[wi++] = (Wall){{ 5, 20}, {-5, 20}, -1, 0x440000FF};
+    walls[wi++] = (Wall){{-5, 20}, {-5, 15}, -1, 0x440000FF};
+
+    // --- Sector 4: Raised Observation Deck (West) ---
+    // Floor 1.0 (Step up), Ceiling 5.0 (Very high)
+    sectors[4] = (Sector){17, 4, 1.0, 5.0, 0x664422FF, 0x221100FF};
+    walls[wi++] = (Wall){{-5, -5}, {-5, -2},  0, 0xAA00AAFF}; // PORTAL back to Hub
+    walls[wi++] = (Wall){{-5, -2}, {-10,-2}, -1, 0x00FF00FF};
+    walls[wi++] = (Wall){{-10,-2}, {-10,-5}, -1, 0x00FF00FF};
+    walls[wi++] = (Wall){{-10,-5}, {-5, -5}, -1, 0x00FF00FF};
+
+    // Initialize player in the center Hub
+    player = (Player){0.0, 0.0, 1.5, 0, 0, 0}; 
 }
-
 void update_player_sector(void) {
     Sector *s = &sectors[player.sector_id];
     for (int i = 0; i < s->wall_count; i++) {
@@ -192,24 +219,29 @@ void render_sector(SDL_Renderer *r, int sid, ClipRange *clip, int depth, int sw,
                     draw_vline(r, x, fmax(yf, child[x].bottom), clip[x].bottom, s->floor_color);
             }
         }
-        else // solid wall
+       else // solid wall
         {
             for (int x = sx; x <= ex; x++)
             {
                 if (clip[x].top >= clip[x].bottom) continue;
-
+        
                 double t = (double)(x - x1) / (x2 - x1);
                 double sc = proj * (iz1 + t * (iz2 - iz1));
-
+        
                 int yc = (int)(yoff - (s->ceil_height - player.z) * sc);
                 int yf = (int)(yoff - (s->floor_height - player.z) * sc);
-
-                // Ceiling
-                draw_vline(r, x, clip[x].top, yc, s->ceil_color);
-                // Wall
-                draw_vline(r, x, yc, yf, w->color);
-                // Floor
-                draw_vline(r, x, yf, clip[x].bottom, s->floor_color);
+        
+                // Clip to current ranges
+                yc = fmax(yc, clip[x].top);
+                yf = fmin(yf, clip[x].bottom);
+        
+                draw_vline(r, x, clip[x].top, yc, s->ceil_color); // Ceiling
+                draw_vline(r, x, yc, yf, w->color);              // Wall
+                draw_vline(r, x, yf, clip[x].bottom, s->floor_color); // Floor
+        
+                // Update clip for next walls
+                clip[x].top = yc;
+                clip[x].bottom = yf;
             }
         }
     }
