@@ -303,6 +303,15 @@ int main(int argc, char *argv[])
         double speed = 0.12;
         double rot = player.angle;
 
+		if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+		    running = false;
+		}
+		if (keys[SDL_SCANCODE_E]) {
+		    player.z += speed;   // float up
+		}
+		if (keys[SDL_SCANCODE_Q]) {
+		    player.z -= speed;   // float down
+		}
         if (keys[SDL_SCANCODE_W]) {
             player.x -= sin(rot) * speed;
             player.y += cos(rot) * speed;
