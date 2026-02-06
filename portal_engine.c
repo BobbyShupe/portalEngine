@@ -4,9 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define FOV_DEG          90.0
-#define MAX_RECURSION_DEPTH 8
-#define NEAR_PLANE       0.01
+#define FOV_DEG              90.0
+#define MAX_RECURSION_DEPTH   8
+#define NEAR_PLANE         0.01
 
 typedef struct { double x, y; } Vec2;
 
@@ -37,16 +37,15 @@ Wall   walls[1024];
 Player player;
 
 // ---------------------------------------------------
-//                   Helpers
+// Helpers
 // ---------------------------------------------------
-
 double point_side(double px, double py, Vec2 a, Vec2 b) {
     return (b.x - a.x)*(py - a.y) - (b.y - a.y)*(px - a.x);
 }
 
 static inline void draw_vline(Uint32 *pixels, int pitch, int x, int y1, int y2, Uint32 color, int height) {
     if (y1 >= y2) return;
-    if (y1 < 0)    y1 = 0;
+    if (y1 < 0) y1 = 0;
     if (y2 > height) y2 = height;
     if (y1 >= y2) return;
 
@@ -58,19 +57,18 @@ static inline void draw_vline(Uint32 *pixels, int pitch, int x, int y1, int y2, 
 }
 
 // ---------------------------------------------------
-//                   Map
+// Map
 // ---------------------------------------------------
-
 void init_map(void) {
     int wi = 0;
 
     // Sector 0: Hub
     sectors[0] = (Sector){0, 5, 0.0f, 3.0f, 0x333333FF, 0x111111FF};
     walls[wi++] = (Wall){{-5, -5}, { 5, -5}, -1, 0xFF0000FF};
-    walls[wi++] = (Wall){{ 5, -5}, { 5, 5},   1, 0x00FF00FF};
-    walls[wi++] = (Wall){{ 5, 5},  {-5, 5},   2, 0x0000FFFF};
+    walls[wi++] = (Wall){{ 5, -5}, { 5, 5},  1, 0x00FF00FF};
+    walls[wi++] = (Wall){{ 5, 5},  {-5, 5},  2, 0x0000FFFF};
     walls[wi++] = (Wall){{-5, 5},  {-5, -2}, -1, 0xFFFF00FF};
-    walls[wi++] = (Wall){{-5, -2}, {-5, -5},  4, 0xAA00AAFF};
+    walls[wi++] = (Wall){{-5, -2}, {-5, -5}, 4, 0xAA00AAFF};
 
     // Sector 1: Sunken Pit
     sectors[1] = (Sector){wi, 4, -1.0f, 2.0f, 0x222244FF, 0x111122FF};
@@ -95,10 +93,10 @@ void init_map(void) {
 
     // Sector 4: Raised Deck
     sectors[4] = (Sector){wi, 4, 1.0f, 5.0f, 0x664422FF, 0x221100FF};
-    walls[wi++] = (Wall){{-5, -5}, {-5, -2},  0, 0xAA00AAFF};
-    walls[wi++] = (Wall){{-5, -2}, {-10,-2}, -1, 0x00FF00FF};
-    walls[wi++] = (Wall){{-10,-2}, {-10,-5}, -1, 0x00FF00FF};
-    walls[wi++] = (Wall){{-10,-5}, {-5, -5}, -1, 0x00FF00FF};
+    walls[wi++] = (Wall){{-5, -5},  {-5, -2},  0, 0xAA00AAFF};
+    walls[wi++] = (Wall){{-5, -2}, {-10, -2}, -1, 0x00FF00FF};
+    walls[wi++] = (Wall){{-10,-2}, {-10, -5}, -1, 0x00FF00FF};
+    walls[wi++] = (Wall){{-10,-5}, { -5, -5}, -1, 0x00FF00FF};
 
     player = (Player){0.0, 0.0, 1.5, 0.0, 0.0, 0};
 }
@@ -115,19 +113,20 @@ void update_player_sector(void) {
 }
 
 // ---------------------------------------------------
-//              Pixel-buffer-based Renderer
+// Renderer (now takes extra clip scratch buffer)
 // ---------------------------------------------------
-
 void render_sector(Uint32 *pixels, int pitch,
-                   int sid, ClipRange *clip,
-                   int depth, int sw, int sh)
+                   int sid,
+                   ClipRange *clip,           // current clip window (modified!)
+                   ClipRange *portal_clip,    // scratch buffer, size == screen width
+                   int depth,
+                   int sw, int sh)
 {
     if (depth > MAX_RECURSION_DEPTH) return;
 
     Sector *s = &sectors[sid];
-
-    const double proj   = (sw / 2.0) / tan(FOV_DEG * M_PI / 360.0);
-    const double yoff   = sh / 2.0 + player.pitch * (sh / 2.0);
+    const double proj = (sw / 2.0) / tan(FOV_DEG * M_PI / 360.0);
+    const double yoff = sh / 2.0 + player.pitch * (sh / 2.0);
 
     for (int i = 0; i < s->wall_count; i++)
     {
@@ -168,7 +167,6 @@ void render_sector(Uint32 *pixels, int pitch,
         double iz1 = 1.0 / vz1;
         double iz2 = 1.0 / vz2;
 
-        ClipRange child_clip[1024] = {0};
         bool portal_visible = false;
 
         for (int x = sx; x <= ex; x++)
@@ -176,7 +174,8 @@ void render_sector(Uint32 *pixels, int pitch,
             if (clip[x].top >= clip[x].bottom) continue;
 
             double t  = (double)(x - x1) / (x2 - x1);
-            double sc = proj * (iz1 + t * (iz2 - iz1));
+            double iz = iz1 + t * (iz2 - iz1);
+            double sc = proj * iz;
 
             int yc = (int)(yoff - (s->ceil_height - player.z) * sc);
             int yf = (int)(yoff - (s->floor_height - player.z) * sc);
@@ -188,26 +187,26 @@ void render_sector(Uint32 *pixels, int pitch,
                 int nyf = (int)(yoff - (ns->floor_height - player.z) * sc);
 
                 // Current sector ceiling & floor
-                draw_vline(pixels, pitch, x, clip[x].top,    fmax(clip[x].top,    yc), s->ceil_color, sh);
-                draw_vline(pixels, pitch, x, fmin(clip[x].bottom, yf), clip[x].bottom, s->floor_color, sh);
+                draw_vline(pixels, pitch, x, clip[x].top,               fmax(clip[x].top, yc),  s->ceil_color, sh);
+                draw_vline(pixels, pitch, x, fmin(clip[x].bottom, yf),  clip[x].bottom,        s->floor_color, sh);
 
                 // Portal lips / step walls
-                draw_vline(pixels, pitch, x, fmax(clip[x].top, yc),  fmin(clip[x].bottom, nyc), w->color, sh);
-                draw_vline(pixels, pitch, x, fmax(clip[x].top, nyf), fmin(clip[x].bottom, yf),  w->color, sh);
+                draw_vline(pixels, pitch, x, fmax(clip[x].top, yc),     fmin(clip[x].bottom, nyc), w->color, sh);
+                draw_vline(pixels, pitch, x, fmax(clip[x].top, nyf),    fmin(clip[x].bottom, yf),  w->color, sh);
 
                 // Child clipping window for recursion
-                child_clip[x].top    = fmax(clip[x].top,    fmax(yc,  nyc));
-                child_clip[x].bottom = fmin(clip[x].bottom, fmin(yf,  nyf));
+                portal_clip[x].top    = fmax(clip[x].top,    fmax(yc, nyc));
+                portal_clip[x].bottom = fmin(clip[x].bottom, fmin(yf, nyf));
 
-                if (child_clip[x].top < child_clip[x].bottom)
+                if (portal_clip[x].top < portal_clip[x].bottom)
                     portal_visible = true;
             }
             else
             {
                 // Solid wall
-                draw_vline(pixels, pitch, x, clip[x].top,    fmax(clip[x].top,    yc), s->ceil_color, sh);
-                draw_vline(pixels, pitch, x, fmin(clip[x].bottom, yf), clip[x].bottom, s->floor_color, sh);
-                draw_vline(pixels, pitch, x, fmax(clip[x].top, yc), fmin(clip[x].bottom, yf), w->color, sh);
+                draw_vline(pixels, pitch, x, clip[x].top,               fmax(clip[x].top, yc),  s->ceil_color, sh);
+                draw_vline(pixels, pitch, x, fmin(clip[x].bottom, yf),  clip[x].bottom,        s->floor_color, sh);
+                draw_vline(pixels, pitch, x, fmax(clip[x].top, yc),     fmin(clip[x].bottom, yf), w->color, sh);
 
                 // Mark column as fully drawn
                 clip[x].top = clip[x].bottom;
@@ -217,12 +216,15 @@ void render_sector(Uint32 *pixels, int pitch,
         // Recurse into portal if anything is visible
         if (w->portal_to >= 0 && portal_visible)
         {
-            render_sector(pixels, pitch, w->portal_to, child_clip, depth + 1, sw, sh);
+            render_sector(pixels, pitch, w->portal_to,
+                          portal_clip,           // now the current clip for child
+                          portal_clip,           // same scratch buffer reused deeper
+                          depth + 1, sw, sh);
 
-            // After recursion — block portal area so later walls in same sector don't overdraw
+            // After recursion — block portal area so later walls don't overdraw
             for (int x = sx; x <= ex; x++) {
-                if (child_clip[x].top < child_clip[x].bottom) {
-                    clip[x].top = clip[x].bottom;   // fully occluded by portal contents
+                if (portal_clip[x].top < portal_clip[x].bottom) {
+                    clip[x].top = clip[x].bottom;
                 }
             }
         }
@@ -230,9 +232,8 @@ void render_sector(Uint32 *pixels, int pitch,
 }
 
 // ---------------------------------------------------
-//                      Main
+// Main
 // ---------------------------------------------------
-
 int main(int argc, char *argv[])
 {
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -240,14 +241,16 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    int w = 1024, h = 768;
-
+    int w, h;
     SDL_Window *win = SDL_CreateWindow(
-        "Portal Engine – Pixel Buffer Edition",
+        "Portal Engine – Pixel Buffer Edition (fixed)",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        w, h, SDL_WINDOW_SHOWN
+        800, 600,
+        SDL_WINDOW_FULLSCREEN_DESKTOP
     );
     if (!win) goto cleanup;
+
+    SDL_GetWindowSize(win, &w, &h);
 
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1,
         SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -259,12 +262,18 @@ int main(int argc, char *argv[])
     );
     if (!target) goto cleanup;
 
+    // Allocate clip buffers once — sized to actual screen width
+    ClipRange *root_clip   = malloc(sizeof(ClipRange) * (size_t)w);
+    ClipRange *portal_clip = malloc(sizeof(ClipRange) * (size_t)w);
+
+    if (!root_clip || !portal_clip) {
+        fprintf(stderr, "Failed to allocate clip buffers\n");
+        goto cleanup;
+    }
+
     SDL_SetRelativeMouseMode(SDL_TRUE);
 
     init_map();
-
-    ClipRange *root_clip = malloc(sizeof(ClipRange) * w);
-    if (!root_clip) goto cleanup;
 
     bool running = true;
     while (running)
@@ -273,14 +282,22 @@ int main(int argc, char *argv[])
         while (SDL_PollEvent(&e))
         {
             if (e.type == SDL_QUIT) running = false;
+            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_RETURN &&
+                (e.key.keysym.mod & KMOD_ALT))
+            {
+                Uint32 flags = SDL_GetWindowFlags(win);
+                SDL_SetWindowFullscreen(
+                    win,
+                    (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP
+                );
+            }
         }
 
         int mx, my;
         SDL_GetRelativeMouseState(&mx, &my);
-
         player.angle += mx * 0.002;
         player.pitch -= my * 0.002;
-        player.pitch = fmax(-1.4, fmin(1.4, player.pitch));  // rough clamp
+        player.pitch = fmax(-1.4, fmin(1.4, player.pitch));
 
         const Uint8 *keys = SDL_GetKeyboardState(NULL);
         double speed = 0.12;
@@ -314,20 +331,22 @@ int main(int argc, char *argv[])
         }
 
         Uint32 *pixels = (Uint32 *)pixels_raw;
-        int pixel_pitch = pitch / 4;   // bytes → pixels
+        int pixel_pitch = pitch / 4;
 
         // Clear buffer (black)
-        memset(pixels, 0, (size_t)h * pitch);
+        memset(pixels, 0, (size_t)h * (size_t)pitch);
 
-        // Reset clipping
+        // Reset root clipping
         for (int i = 0; i < w; i++) {
             root_clip[i].top    = 0;
             root_clip[i].bottom = h;
         }
 
-        // Render everything into pixel buffer
+        // Render
         render_sector(pixels, pixel_pitch,
-                      player.sector_id, root_clip,
+                      player.sector_id,
+                      root_clip,
+                      portal_clip,
                       0, w, h);
 
         SDL_UnlockTexture(target);
@@ -339,6 +358,7 @@ int main(int argc, char *argv[])
     }
 
     free(root_clip);
+    free(portal_clip);
 
 cleanup:
     if (target) SDL_DestroyTexture(target);
