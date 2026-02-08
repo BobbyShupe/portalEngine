@@ -1,0 +1,40 @@
+# Comments start with #
+# sector id floor_h ceil_h floor_color ceil_color   (colors in 0xAARRGGBB format)
+
+sector 0 0.0 3.0 0x333333FF 0x111111FF
+sector 1 -1.0 2.0 0x222244FF 0x111122FF
+sector 2 0.0 2.5 0x444444FF 0x222222FF
+sector 3 0.5 1.2 0x111111FF 0x050505FF
+sector 4 1.0 5.0 0x664422FF 0x221100FF
+
+# wall format: x1 y1 x2 y2 portal_to color
+# portal_to = -1 for solid wall
+
+wall 0  -5 -5   5 -5   -1  0xFF0000FF
+wall 0   5 -5   5  5    1  0x00FF00FF
+wall 0   5  5  -5  5    2  0x0000FFFF
+wall 0  -5  5  -5 -2   -1  0xFFFF00FF
+wall 0  -5 -2  -5 -5    4  0xAA00AAFF
+
+wall 1   5 -5  15 -5   -1  0x00FFFFFF
+wall 1  15 -5  15  5   -1  0xFF8800FF
+wall 1  15  5   5  5   -1  0xFFFFFFFF
+wall 1   5  5   5 -5    0  0x00FF00FF
+
+wall 2   5  5   5 15   -1  0x888888FF
+wall 2   5 15  -5 15    3  0x00FF00FF
+wall 2  -5 15  -5  5   -1  0x888888FF
+wall 2  -5  5   5  5    0  0x0000FFFF
+
+wall 3  -5 15   5 15    2  0x00FF00FF
+wall 3   5 15   5 20   -1  0x440000FF
+wall 3   5 20  -5 20   -1  0x440000FF
+wall 3  -5 20  -5 15   -1  0x440000FF
+
+wall 4  -5 -5  -5 -2    0  0xAA00AAFF
+wall 4  -5 -2 -10 -2   -1  0x00FF00FF
+wall 4 -10 -2 -10 -5   -1  0x00FF00FF
+wall 4 -10 -5  -5 -5   -1  0x00FF00FF
+
+# optional: starting player position
+player 0.0 0.0 1.5 0.0 0.0 0
