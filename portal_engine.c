@@ -116,56 +116,47 @@ void draw_plane_vline(Uint32 *pixels, int pitch, int x, int y1, int y2,
                       double player_z, double plane_h, int height)
 {
     if (y1 >= y2) return;
-    if (y1 < 0) y1 = 0;
-    if (y2 > height) y2 = height;
-    if (y1 >= y2) return;
 
-    // ────────────────────────────────────────────────
-    // Fixed: compute view-space ray direction **once**
-    //        (screen column → world direction)
-    // ────────────────────────────────────────────────
-    double screen_center_x = height / 2.0;           // normally width/2, typo in original!
-	double ray_dx_screen = (x - screen_center_x) / proj;
-    double ray_dz_screen   = 1.0;                             // forward
+    // 1. Calculate ray direction (World Space) once per column
+    double screen_x = x - (800 / 2.0); 
+    double cos_a = cos(player_angle);
+    double sin_a = sin(player_angle);
+    double ray_dir_x = (screen_x / proj) * cos_a - sin_a;
+    double ray_dir_y = (screen_x / proj) * sin_a + cos_a;
 
-    // Rotate to world space — do this **once per column**, not per pixel
-    double dir_x = ray_dx_screen * (-sin(player_angle)) + cos(player_angle);
-                 
-    double dir_y = ray_dx_screen * ( cos(player_angle)) + sin(player_angle);
-    // Optional: normalize if you want constant texel density (usually not needed)
-    // double len = hypot(dir_x, dir_y); if (len > 0) { dir_x /= len; dir_y /= len; }
-
+    double h_diff = plane_h - player_z;
     Uint32 *dst = pixels + y1 * pitch + x;
+
+    // 2. Optimization: Use pre-calculated scale to reduce divisions
+    double h_proj = h_diff * proj;
 
     for (int y = y1; y < y2; y++)
     {
-        double div = (y - yoff);
-        if (fabs(div) < 1e-6) {
-            *dst = 0; // or some fallback color
+        double dy = y - yoff;
+        
+        // Horizon check
+        if (fabs(dy) < 0.1) {
+            *dst = 0;
             dst += pitch;
             continue;
         }
 
-        // Distance along ray to plane
-        double dist = (player_z - plane_h) / div * proj;
+        // 3. Distance to the intersection point
+        double distance = h_proj / dy;
 
-        if (dist <= 0) {    // behind camera or exactly on plane
-            *dst = 0xFF000000; // black / transparent fallback
-            dst += pitch;
-            continue;
-        }
+        // 4. World-space coordinates
+        double hit_x = player_x + distance * ray_dir_x;
+        double hit_y = player_y + distance * ray_dir_y;
 
-        double hit_x = player_x + dist * dir_x;
-        double hit_y = player_y + dist * dir_y;
+        // 5. Fixed-point texture lookup
+        // Shift and mask are much faster than floating point modulo
+        int tx = (int)(hit_x * TEX_SCALE * tex->w) & (tex->w - 1);
+        int ty = (int)(hit_y * TEX_SCALE * tex->h) & (tex->h - 1);
 
-        // Texture coordinates — now stable regardless of rotation
-        int tx = (int)(hit_x * TEX_SCALE * tex->w) % tex->w;
-        int ty = (int)(hit_y * TEX_SCALE * tex->h) % tex->h;
-
-        if (tx < 0) tx += tex->w;
-        if (ty < 0) ty += tex->h;
-
-        *dst = get_tex_pixel(tex, tx, ty);
+        // Note: The '& (size-1)' trick only works if texture sizes are powers of 2 (64, 128, etc.)
+        // If they aren't, stick to the % operator.
+        
+        *dst = ((Uint32*)tex->pixels)[ty * (tex->pitch / 4) + tx];
         dst += pitch;
     }
 }
