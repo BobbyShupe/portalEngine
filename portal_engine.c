@@ -108,27 +108,63 @@ void draw_wall_vline(Uint32 *pixels, int pitch, int x, int y1, int y2, SDL_Surfa
     }
 }
 
-void draw_plane_vline(Uint32 *pixels, int pitch, int x, int y1, int y2, SDL_Surface *tex, double proj, double yoff, double player_x, double player_y, double player_angle, double player_z, double plane_h, int height) {
+void draw_plane_vline(Uint32 *pixels, int pitch, int x, int y1, int y2,
+                      SDL_Surface *tex,
+                      double proj,
+                      double yoff,
+                      double player_x, double player_y, double player_angle,
+                      double player_z, double plane_h, int height)
+{
     if (y1 >= y2) return;
     if (y1 < 0) y1 = 0;
     if (y2 > height) y2 = height;
     if (y1 >= y2) return;
-    double ray_ang = atan((height / 2.0 - x) / proj);  // Note: sw/2 - x, but wait, sw is width
-    // Wait, correction: atan((sw/2.0 - x) / proj)
-    double dir_x = cos(player_angle + ray_ang);
-    double dir_y = sin(player_angle + ray_ang);
+
+    // ────────────────────────────────────────────────
+    // Fixed: compute view-space ray direction **once**
+    //        (screen column → world direction)
+    // ────────────────────────────────────────────────
+    double screen_center_x = height / 2.0;           // normally width/2, typo in original!
+	double ray_dx_screen = (x - screen_center_x) / proj;
+    double ray_dz_screen   = 1.0;                             // forward
+
+    // Rotate to world space — do this **once per column**, not per pixel
+    double dir_x = ray_dx_screen * (-sin(player_angle)) + cos(player_angle);
+                 
+    double dir_y = ray_dx_screen * ( cos(player_angle)) + sin(player_angle);
+    // Optional: normalize if you want constant texel density (usually not needed)
+    // double len = hypot(dir_x, dir_y); if (len > 0) { dir_x /= len; dir_y /= len; }
+
     Uint32 *dst = pixels + y1 * pitch + x;
-    for (int y = y1; y < y2; y++) {
+
+    for (int y = y1; y < y2; y++)
+    {
         double div = (y - yoff);
-        if (fabs(div) < 1e-6) continue;  // Avoid division by zero
-        double dist = (player_z - plane_h) * proj / div;
-        if (dist < 0) continue;  // Wrong direction
+        if (fabs(div) < 1e-6) {
+            *dst = 0; // or some fallback color
+            dst += pitch;
+            continue;
+        }
+
+        // Distance along ray to plane
+        double dist = (player_z - plane_h) / div * proj;
+
+        if (dist <= 0) {    // behind camera or exactly on plane
+            *dst = 0xFF000000; // black / transparent fallback
+            dst += pitch;
+            continue;
+        }
+
         double hit_x = player_x + dist * dir_x;
         double hit_y = player_y + dist * dir_y;
+
+        // Texture coordinates — now stable regardless of rotation
         int tx = (int)(hit_x * TEX_SCALE * tex->w) % tex->w;
-        if (tx < 0) tx += tex->w;
         int ty = (int)(hit_y * TEX_SCALE * tex->h) % tex->h;
+
+        if (tx < 0) tx += tex->w;
         if (ty < 0) ty += tex->h;
+
         *dst = get_tex_pixel(tex, tx, ty);
         dst += pitch;
     }
