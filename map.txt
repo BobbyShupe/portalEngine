@@ -1,40 +1,61 @@
-# Comments start with #
-# sector id floor_h ceil_h floor_color ceil_color   (colors in 0xAARRGGBB format)
+# --- SECTOR DEFINITIONS FIRST ---
+# sector id floor_h ceil_h floor_color ceil_color
+sector 0  0.0  3.0  0x333333FF 0x111111FF
+sector 1 -1.0  2.0  0x222244FF 0x111122FF
+sector 2  0.0  2.5  0x444444FF 0x222222FF
+sector 3  0.5  1.2  0x111111FF 0x050505FF
+sector 4  1.0  5.0  0x664422FF 0x221100FF
 
-sector 0 0.0 3.0 0x333333FF 0x111111FF
-sector 1 -1.0 2.0 0x222244FF 0x111122FF
-sector 2 0.0 2.5 0x444444FF 0x222222FF
-sector 3 0.5 1.2 0x111111FF 0x050505FF
-sector 4 1.0 5.0 0x664422FF 0x221100FF
+# New Large Room & Stairs
+sector 5  0.0  6.0  0x222222FF 0x050505FF  # Great Hall
+sector 6  0.5  6.5  0x444444FF 0x111111FF  # Step 1
+sector 7  1.0  7.0  0x444444FF 0x111111FF  # Step 2
+sector 8  1.5  7.5  0x444444FF 0x111111FF  # Step 3
+sector 9  2.0  8.0  0x224422FF 0x112211FF  # Elevated Gallery
 
-# wall format: x1 y1 x2 y2 portal_to color
-# portal_to = -1 for solid wall
+# --- WALL DEFINITIONS ---
+# wall sector_id x1 y1 x2 y2 portal_to color
 
+# Sector 0 (Hub)
 wall 0  -5 -5   5 -5   -1  0xFF0000FF
 wall 0   5 -5   5  5    1  0x00FF00FF
 wall 0   5  5  -5  5    2  0x0000FFFF
 wall 0  -5  5  -5 -2   -1  0xFFFF00FF
 wall 0  -5 -2  -5 -5    4  0xAA00AAFF
 
+# Sector 1 (Large Room Connection)
 wall 1   5 -5  15 -5   -1  0x00FFFFFF
-wall 1  15 -5  15  5   -1  0xFF8800FF
+wall 1  15 -5  15  5    5  0xFF8800FF  # Portal to Great Hall (Sector 5)
 wall 1  15  5   5  5   -1  0xFFFFFFFF
 wall 1   5  5   5 -5    0  0x00FF00FF
 
-wall 2   5  5   5 15   -1  0x888888FF
-wall 2   5 15  -5 15    3  0x00FF00FF
-wall 2  -5 15  -5  5   -1  0x888888FF
-wall 2  -5  5   5  5    0  0x0000FFFF
+# Sector 5 (The Great Hall - 20x20 room)
+wall 5  15 -5  35 -5   -1  0x555555FF
+wall 5  35 -5  35  15  -1  0x555555FF
+wall 5  35  15 15  15   6  0x00FF00FF  # Leads to Stairs
+wall 5  15  15 15 -5    1  0xFF8800FF
 
-wall 3  -5 15   5 15    2  0x00FF00FF
-wall 3   5 15   5 20   -1  0x440000FF
-wall 3   5 20  -5 20   -1  0x440000FF
-wall 3  -5 20  -5 15   -1  0x440000FF
+# The Staircase (Sectors 6, 7, 8)
+wall 6  15  15  35  15  5  0x00FF00FF
+wall 6  35  15  35  17 -1  0x777777FF
+wall 6  35  17  15  17  7  0x00FF00FF
+wall 6  15  17  15  15 -1  0x777777FF
 
-wall 4  -5 -5  -5 -2    0  0xAA00AAFF
-wall 4  -5 -2 -10 -2   -1  0x00FF00FF
-wall 4 -10 -2 -10 -5   -1  0x00FF00FF
-wall 4 -10 -5  -5 -5   -1  0x00FF00FF
+wall 7  15  17  35  17  6  0x00FF00FF
+wall 7  35  17  35  19 -1  0x777777FF
+wall 7  35  19  15  19  8  0x00FF00FF
+wall 7  15  19  15  17 -1  0x777777FF
 
-# optional: starting player position
+wall 8  15  19  35  19  7  0x00FF00FF
+wall 8  35  19  35  21 -1  0x777777FF
+wall 8  35  21  15  21  9  0x00FF00FF
+wall 8  15  21  15  19 -1  0x777777FF
+
+# Sector 9 (Elevated Gallery)
+wall 9  15  21  35  21  8  0x00FF00FF
+wall 9  35  21  35  40 -1  0x00AA00FF
+wall 9  35  40  15  40 -1  0x00AA00FF
+wall 9  15  40  15  21 -1  0x00AA00FF
+
+# Player start
 player 0.0 0.0 1.5 0.0 0.0 0
