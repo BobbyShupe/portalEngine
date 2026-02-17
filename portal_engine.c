@@ -1,20 +1,15 @@
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <dirent.h>
-#include <sys/stat.h>
-#include <time.h>
 
 #define FOV_DEG          90.0
 #define MAX_RECURSION_DEPTH 8
 #define NEAR_PLANE       0.01
 #define MAX_SECTORS      64
 #define MAX_WALLS       2048
-#define TEX_SCALE        0.25  // Adjust as needed: higher value = denser tiling
 
 typedef struct { double x, y; } Vec2;
 
@@ -22,8 +17,6 @@ typedef struct {
     Vec2 p1, p2;
     int portal_to;
     Uint32 color;
-    SDL_Surface *tex;
-    double length;
 } Wall;
 
 typedef struct {
@@ -31,8 +24,6 @@ typedef struct {
     int wall_count;
     float floor_height, ceil_height;
     Uint32 floor_color, ceil_color;
-    SDL_Surface *floor_tex;
-    SDL_Surface *ceil_tex;
 } Sector;
 
 typedef struct {
@@ -48,12 +39,6 @@ typedef struct {
     int lowest_floor_y;
 } ColumnClip;
 
-typedef struct {
-    SDL_Surface **textures;
-    int count;
-    int capacity;
-} TextureList;
-
 // Globals
 Sector sectors[MAX_SECTORS];
 Wall   walls[MAX_WALLS];
@@ -68,18 +53,7 @@ double point_side(double px, double py, Vec2 a, Vec2 b) {
     return (b.x - a.x)*(py - a.y) - (b.y - a.y)*(px - a.x);
 }
 
-static inline Uint32 get_tex_pixel(SDL_Surface *tex, int tx, int ty) {
-    int w = tex->w;
-    int h = tex->h;
-    tx %= w;
-    if (tx < 0) tx += w;
-    ty %= h;
-    if (ty < 0) ty += h;
-    Uint32 *pixels = (Uint32 *)tex->pixels;
-    return pixels[ty * (tex->pitch / 4) + tx];
-}
-
-static inline void draw_solid_vline(Uint32 *pixels, int pitch, int x, int y1, int y2, Uint32 color, int height) {
+static inline void draw_vline(Uint32 *pixels, int pitch, int x, int y1, int y2, Uint32 color, int height) {
     if (y1 >= y2) return;
     if (y1 < 0) y1 = 0;
     if (y2 > height) y2 = height;
@@ -89,124 +63,6 @@ static inline void draw_solid_vline(Uint32 *pixels, int pitch, int x, int y1, in
         *dst = color;
         dst += pitch;
     }
-}
-
-void draw_wall_vline(Uint32 *pixels, int pitch, int x, int y1, int y2, SDL_Surface *tex, double along_dist, double sc, double yoff, double player_z, double floor_h, double ceil_h, int height) {
-    if (y1 >= y2) return;
-    if (y1 < 0) y1 = 0;
-    if (y2 > height) y2 = height;
-    if (y1 >= y2) return;
-    int tx = (int)(along_dist * TEX_SCALE * tex->w) % tex->w;
-    if (tx < 0) tx += tex->w;
-    Uint32 *dst = pixels + y1 * pitch + x;
-    for (int y = y1; y < y2; y++) {
-        double hit_h = player_z + (yoff - y) / sc;
-        int ty = (int)((hit_h - floor_h) * TEX_SCALE * tex->h) % tex->h;
-        if (ty < 0) ty += tex->h;
-        *dst = get_tex_pixel(tex, tx, ty);
-        dst += pitch;
-    }
-}
-
-void draw_plane_vline(Uint32 *pixels, int pitch, int x, int y1, int y2,
-                      SDL_Surface *tex,
-                      double proj,
-                      double yoff,
-                      double player_x, double player_y, double player_angle,
-                      double player_z, double plane_h, int height)
-{
-    if (y1 >= y2) return;
-
-    // 1. Calculate ray direction (World Space) once per column
-    double screen_x = x - (800 / 2.0); 
-    double cos_a = cos(player_angle);
-    double sin_a = sin(player_angle);
-    double ray_dir_x = (screen_x / proj) * cos_a - sin_a;
-    double ray_dir_y = (screen_x / proj) * sin_a + cos_a;
-
-    double h_diff = plane_h - player_z;
-    Uint32 *dst = pixels + y1 * pitch + x;
-
-    // 2. Optimization: Use pre-calculated scale to reduce divisions
-    double h_proj = h_diff * proj;
-
-    for (int y = y1; y < y2; y++)
-    {
-        double dy = y - yoff;
-        
-        // Horizon check
-        if (fabs(dy) < 0.1) {
-            *dst = 0;
-            dst += pitch;
-            continue;
-        }
-
-        // 3. Distance to the intersection point
-        double distance = h_proj / dy;
-
-        // 4. World-space coordinates
-        double hit_x = player_x + distance * ray_dir_x;
-        double hit_y = player_y + distance * ray_dir_y;
-
-        // 5. Fixed-point texture lookup
-        // Shift and mask are much faster than floating point modulo
-        int tx = (int)(hit_x * TEX_SCALE * tex->w) & (tex->w - 1);
-        int ty = (int)(hit_y * TEX_SCALE * tex->h) & (tex->h - 1);
-
-        // Note: The '& (size-1)' trick only works if texture sizes are powers of 2 (64, 128, etc.)
-        // If they aren't, stick to the % operator.
-        
-        *dst = ((Uint32*)tex->pixels)[ty * (tex->pitch / 4) + tx];
-        dst += pitch;
-    }
-}
-
-void init_texture_list(TextureList *list) {
-    list->textures = NULL;
-    list->count = 0;
-    list->capacity = 0;
-}
-
-void add_texture(TextureList *list, SDL_Surface *tex) {
-    if (list->count >= list->capacity) {
-        list->capacity = list->capacity ? list->capacity * 2 : 16;
-        list->textures = realloc(list->textures, sizeof(SDL_Surface*) * list->capacity);
-    }
-    list->textures[list->count++] = tex;
-}
-
-void free_texture_list(TextureList *list) {
-    for (int i = 0; i < list->count; i++) {
-        if (list->textures[i]) SDL_FreeSurface(list->textures[i]);
-    }
-    free(list->textures);
-}
-
-void load_textures_recursive(const char *dir, TextureList *list) {
-    DIR *d = opendir(dir);
-    if (!d) return;
-    struct dirent *entry;
-    while ((entry = readdir(d))) {
-        if (entry->d_type == DT_DIR) {
-            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
-            char path[1024];
-            snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
-            load_textures_recursive(path, list);
-        } else {
-            const char *ext = strrchr(entry->d_name, '.');
-            if (ext && (strcasecmp(ext, ".png") == 0 || strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".bmp") == 0)) {
-                char path[1024];
-                snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
-                SDL_Surface *tex = IMG_Load(path);
-                if (tex) {
-                    add_texture(list, tex);
-                } else {
-                    fprintf(stderr, "Failed to load texture: %s - %s\n", path, IMG_GetError());
-                }
-            }
-        }
-    }
-    closedir(d);
 }
 
 bool load_map(const char *filename)
@@ -228,8 +84,6 @@ bool load_map(const char *filename)
     for (int i = 0; i < MAX_SECTORS; i++) {
         sectors[i].first_wall = -1;
         sectors[i].wall_count = 0;
-        sectors[i].floor_tex = NULL;
-        sectors[i].ceil_tex = NULL;
     }
 
     char line[256];
@@ -309,15 +163,12 @@ bool load_map(const char *filename)
             if (sectors[sec].first_wall < 0)
                 sectors[sec].first_wall = wall_count;
 
-            walls[wall_count] = (Wall){
+            walls[wall_count++] = (Wall){
                 {x1, y1}, {x2, y2},
                 portal,
-                (Uint32)color,
-                NULL,
-                hypot(x2 - x1, y2 - y1)
+                (Uint32)color
             };
 
-            wall_count++;
             sectors[sec].wall_count++;
         }
 
@@ -377,7 +228,7 @@ void update_player_sector(void) {
 }
 
 // ---------------------------------------------------
-// Renderer
+// Renderer  (unchanged except array sizes)
 // ---------------------------------------------------
 void render_sector(Uint32 *pixels, int pitch,
                    int sid,
@@ -452,33 +303,16 @@ void render_sector(Uint32 *pixels, int pitch,
                 int nyc = (int)(yoff - (ns->ceil_height - player.z) * sc);
                 int nyf = (int)(yoff - (ns->floor_height - player.z) * sc);
 
-                // Draw ceiling
-                if (s->ceil_tex)
-                    draw_plane_vline(pixels, pitch, x, c->top, fmin(c->bottom, yc), s->ceil_tex, proj, yoff, player.x, player.y, player.angle, player.z, s->ceil_height, sh);
-                else
-                    draw_solid_vline(pixels, pitch, x, c->top, fmin(c->bottom, yc), s->ceil_color, sh);
+                draw_vline(pixels, pitch, x, c->top, fmin(c->bottom, yc), s->ceil_color, sh);
+                draw_vline(pixels, pitch, x, fmax(c->top, yf), c->bottom, s->floor_color, sh);
 
-                // Draw floor
-                if (s->floor_tex)
-                    draw_plane_vline(pixels, pitch, x, fmax(c->top, yf), c->bottom, s->floor_tex, proj, yoff, player.x, player.y, player.angle, player.z, s->floor_height, sh);
-                else
-                    draw_solid_vline(pixels, pitch, x, fmax(c->top, yf), c->bottom, s->floor_color, sh);
-
-                // Draw upper wall
                 int upper_top    = fmax(c->top,   yc);
                 int upper_bottom = fmin(c->bottom, nyc);
-                if (w->tex)
-                    draw_wall_vline(pixels, pitch, x, upper_top, upper_bottom, w->tex, t * w->length, sc, yoff, player.z, s->floor_height, s->ceil_height, sh);
-                else
-                    draw_solid_vline(pixels, pitch, x, upper_top, upper_bottom, w->color, sh);
+                draw_vline(pixels, pitch, x, upper_top, upper_bottom, w->color, sh);
 
-                // Draw lower wall
                 int lower_top    = fmax(c->top,   nyf);
                 int lower_bottom = fmin(c->bottom, yf);
-                if (w->tex)
-                    draw_wall_vline(pixels, pitch, x, lower_top, lower_bottom, w->tex, t * w->length, sc, yoff, player.z, s->floor_height, s->ceil_height, sh);
-                else
-                    draw_solid_vline(pixels, pitch, x, lower_top, lower_bottom, w->color, sh);
+                draw_vline(pixels, pitch, x, lower_top, lower_bottom, w->color, sh);
 
                 portal_clip[x] = *c;
 
@@ -493,25 +327,9 @@ void render_sector(Uint32 *pixels, int pitch,
             }
             else
             {
-                // Draw ceiling
-                if (s->ceil_tex)
-                    draw_plane_vline(pixels, pitch, x, c->top, fmin(c->bottom, yc), s->ceil_tex, proj, yoff, player.x, player.y, player.angle, player.z, s->ceil_height, sh);
-                else
-                    draw_solid_vline(pixels, pitch, x, c->top, fmin(c->bottom, yc), s->ceil_color, sh);
-
-                // Draw floor
-                if (s->floor_tex)
-                    draw_plane_vline(pixels, pitch, x, fmax(c->top, yf), c->bottom, s->floor_tex, proj, yoff, player.x, player.y, player.angle, player.z, s->floor_height, sh);
-                else
-                    draw_solid_vline(pixels, pitch, x, fmax(c->top, yf), c->bottom, s->floor_color, sh);
-
-                // Draw wall
-                int wall_top = fmax(c->top, yc);
-                int wall_bottom = fmin(c->bottom, yf);
-                if (w->tex)
-                    draw_wall_vline(pixels, pitch, x, wall_top, wall_bottom, w->tex, t * w->length, sc, yoff, player.z, s->floor_height, s->ceil_height, sh);
-                else
-                    draw_solid_vline(pixels, pitch, x, wall_top, wall_bottom, w->color, sh);
+                draw_vline(pixels, pitch, x, c->top, fmin(c->bottom, yc), s->ceil_color, sh);
+                draw_vline(pixels, pitch, x, fmax(c->top, yf), c->bottom, s->floor_color, sh);
+                draw_vline(pixels, pitch, x, fmax(c->top, yc), fmin(c->bottom, yf), w->color, sh);
 
                 c->top = c->bottom;  // occlude
             }
@@ -543,12 +361,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if (!(IMG_Init(IMG_INIT_PNG | IMG_INIT_JPG))) {
-        fprintf(stderr, "IMG_Init failed: %s\n", IMG_GetError());
-        SDL_Quit();
-        return 1;
-    }
-
     int w, h;
     SDL_Window *win = SDL_CreateWindow(
         "Portal Engine – Map from file",
@@ -565,7 +377,7 @@ int main(int argc, char *argv[])
     if (!ren) goto cleanup;
 
     SDL_Texture *target = SDL_CreateTexture(
-        ren, SDL_PIXELFORMAT_ABGR8888,           // ← most common fix on little-endian systems
+        ren, SDL_PIXELFORMAT_RGBA8888,
         SDL_TEXTUREACCESS_STREAMING, w, h
     );
     if (!target) goto cleanup;
@@ -579,22 +391,6 @@ int main(int argc, char *argv[])
     if (!load_map(mapfile)) {
         fprintf(stderr, "Failed to load map\n");
         goto cleanup;
-    }
-
-    TextureList textures;
-    init_texture_list(&textures);
-    load_textures_recursive("Textures", &textures);
-    printf("Loaded %d textures\n", textures.count);
-
-    if (textures.count > 0) {
-        srand((unsigned int)time(NULL));
-        for (int i = 0; i < sector_count; i++) {
-            sectors[i].floor_tex = textures.textures[rand() % textures.count];
-            sectors[i].ceil_tex = textures.textures[rand() % textures.count];
-        }
-        for (int i = 0; i < wall_count; i++) {
-            walls[i].tex = textures.textures[rand() % textures.count];
-        }
     }
 
     SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -650,13 +446,13 @@ int main(int argc, char *argv[])
         update_player_sector();
 
         void *pixels_raw;
-        int pixel_pitch;
-        if (SDL_LockTexture(target, NULL, &pixels_raw, &pixel_pitch) < 0) break;
+        int pitch;
+        if (SDL_LockTexture(target, NULL, &pixels_raw, &pitch) < 0) break;
 
         Uint32 *pixels = (Uint32 *)pixels_raw;
-        pixel_pitch /= 4;
+        int pixel_pitch = pitch / 4;
 
-        memset(pixels, 0, (size_t)h * (size_t)(pixel_pitch * 4));
+        memset(pixels, 0, (size_t)h * (size_t)pitch);
 
         for (int i = 0; i < w; i++) {
             root_clip[i].top           = 0;
@@ -677,7 +473,6 @@ int main(int argc, char *argv[])
         SDL_RenderPresent(ren);
     }
 
-    free_texture_list(&textures);
     free(root_clip);
     free(portal_clip);
 
@@ -685,7 +480,6 @@ cleanup:
     if (target) SDL_DestroyTexture(target);
     if (ren)    SDL_DestroyRenderer(ren);
     if (win)    SDL_DestroyWindow(win);
-    IMG_Quit();
     SDL_Quit();
     return 0;
 }
